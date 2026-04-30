@@ -1,5 +1,8 @@
 # QAIA4MOO
 This repository implements noise-injected Simulated Bifurcation (NI-SB) solvers for multi-objective optimization.
+It is a supplementary material for paper 
+- * Xian-Zhe Tao, Pavel Mosharev, and Man-Hong Yung. "Multi-Objective Optimization by Quantum-Annealing-Inspired Algorithms." arXiv:2604.26477 (2026).*
+[](https://arxiv.org/abs/2604.26477)
 
 ## Files Overview
 
