@@ -1,0 +1,2 @@
+num_trials,amp,num_c_vectors,num_objectives,h_value,batch_size,n_iter,hv_max,max_Pareto_solutions,QA_samples,QAOA_samples
+100,0.15,105,3,16,500,50,43471.70365440166,2067,288000,25000000
