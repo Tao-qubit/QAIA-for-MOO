@@ -49,13 +49,22 @@ def tri_problem(n,ds):
 # 	matrix2 = .5*matrix0-5*matrix1
 # 	return matrix0.astype(float),matrix1.astype(float),matrix2.astype(float)
 
-def pareto_count(input,ref):
-	unique_input = np.unique(input, axis=0)
-	combined = np.vstack((unique_input, ref))
-	_, counts = np.unique(combined, axis=0, return_counts=True)
-	return np.sum(counts[:unique_input.shape[0]] > 1)
+# def pareto_count(input,ref):
+# 	unique_input = np.unique(input, axis=0)
+# 	combined = np.vstack((unique_input, ref))
+# 	_, counts, re_index = np.unique(combined, axis=0, return_counts=True,return_inverse=True)
+# 	return np.sum(counts[re_index[:unique_input.shape[0]]] > 1)
+
+def pareto_count(input, ref):
+    unique_input = np.unique(input, axis=0)
+    ref_set = set(map(tuple, ref))
+    count = sum(1 for row in unique_input if tuple(row) in ref_set)
+    return count
 
 import moocore
+
+# device = 'cpu'
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 n2_list=[]
 n3_list=[]
@@ -67,12 +76,13 @@ d_list=[]
 ref_pareto=[]
 
 for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(100,1),(200,0.5),(200,1)]:
+# for (n_loop,d_loop) in [(200,1)]:
 		for rep_ in range(5):
 			if d_loop=='ibm':
 				num_objectives = 3
 				n = 42
 				weights = fetch_weights(num_objectives)
-				Q1,Q2,Q3 = torch.zeros((42,42)).cuda(),torch.zeros((42,42)).cuda(),torch.zeros((42,42)).cuda()
+				Q1,Q2,Q3 = torch.zeros((42,42)).to(device),torch.zeros((42,42)).to(device),torch.zeros((42,42)).to(device)
 				for key in weights:
 					Q1[key]=weights[key][0]
 					Q2[key]=weights[key][1]
@@ -80,20 +90,23 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 					
 				J0 , J1 , J2 = (Q1+Q1.T)/2 ,  (Q2+Q2.T)/2, (Q3+Q3.T)/2
 				reference_point = get_reference_point(num_objectives)
-				hv_max = get_hv_max(num_objectives)
+				hv_ref = get_hv_max(num_objectives)
 				sol = np.load('../3objres.npy')
 
 			else:
 				n = n_loop
 				ds = d_loop
 				# a ,b,c,d = 1,1,-2,-5
-				np.random.seed(666)
+				np.random.seed(22233)
 				matrix0, matrix1, matrix2 = tri_problem(n,ds=ds)
 				np.random.seed(None)
 				if n<25:
 					spin_vectors = bf_samples(n)
 				else:
-					spin_vectors = np.random.randint(0, 2, size=(200,n))*2-1
+					spin_vectors = np.random.randint(0, 2, size=(1000,n))*2-1
+
+				num_objectives = 3
+				J0, J1, J2 = torch.from_numpy(matrix0).to(device),  torch.from_numpy(matrix1).to(device), torch.from_numpy(matrix2).to(device)
 
 				obj0 = 0.5*(matrix0.sum() - (spin_vectors.dot(matrix0)*spin_vectors).sum(axis=1) )
 				obj1 = 0.5*(matrix1.sum() - (spin_vectors.dot(matrix1)*spin_vectors).sum(axis=1) )
@@ -101,18 +114,18 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 				cost = np.array([obj0,obj1,obj2]).T
 
 				answer = moocore.is_nondominated(cost, maximise=True, keep_weakly=False)
-				# target = cost[answer].shape[0]
 				reference_point = cost.min(axis=0)
+				hv_ref = moocore.hypervolume(-cost[answer], ref=-np.array(reference_point))
 				sol = (spin_vectors[answer]/2+0.5).astype(bool)
-				hv_max = moocore.hypervolume(-cost[answer], ref=-np.array(reference_point))
-				print(hv_max,cost[answer].shape[0])
+				print('spin_non:', sol.shape)
 
-				num_objectives = 3
-				J0, J1, J2 = torch.from_numpy(matrix0).cuda(),  torch.from_numpy(matrix1).cuda(), torch.from_numpy(matrix2).cuda()
 
 			import sys 
 			sys.path.append("..") 
-			import tabu_SB_gpu_half as tSB
+			if device=='cpu':
+				import tabu_SB_gpu as tSB
+			else:
+				import tabu_SB_gpu_half as tSB
 			from itertools import combinations_with_replacement
 
 			start_ete_b = time.time()
@@ -121,7 +134,7 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 			c_vectors = weights_array
 			print(c_vectors.shape)
 			# c_vectors = np.random.dirichlet(np.ones(num_objectives),size=100)
-			J = torch.zeros((n*c_vectors.shape[0],n*c_vectors.shape[0])).cuda()
+			J = torch.zeros((n*c_vectors.shape[0],n*c_vectors.shape[0])).to(device)
 			if num_objectives==2:
 				for j in range(c_vectors.shape[0]):
 					J[j*n:(1+j)*n,j*n:(1+j)*n]=c_vectors[j,0]*J0+c_vectors[j,1]*J1
@@ -130,7 +143,7 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 					J[j*n:(1+j)*n,j*n:(1+j)*n]=c_vectors[j,0]*J0+c_vectors[j,1]*J1+c_vectors[j,2]*J2
 			Ising_J = J
 			xi = 1 / torch.abs(Ising_J.sum(axis=1)).max()
-			Jm = Ising_J.cuda().float()
+			Jm = Ising_J.to(device).float()
 			Jm = Jm.to_sparse_csr()
 
 			results_b = None
@@ -139,12 +152,12 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 				batch_size = 3000
 				time_lim = 5
 			else:
-				n_iter = 1000
-				batch_size = 200
+				n_iter = 500
+				batch_size = 100
 				time_lim = 10
 			temp_time_b = time.time()
 			while temp_time_b-start_ete_b<time_lim:
-				s = tSB.SB(-Jm, n_iter=n_iter, xi=xi, dt=1, batch_size=batch_size,device='cuda')
+				s = tSB.SB(-Jm, n_iter=n_iter, xi=xi, dt=1, batch_size=batch_size,device=device)
 				start = time.time()
 				s.update_b(amp=0.1)
 				end=time.time()
@@ -152,14 +165,14 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 				rand_signs = 2.0 * torch.randint(0, 2, s.x.shape, device=s.x.device, dtype=s.x.dtype) - 1
 				best_sample = torch.where(s.x == 0, rand_signs, s.x)
 				best_sample = torch.sign(best_sample)
-				best_sample = best_sample[0]*best_sample
+				# best_sample = best_sample[0]*best_sample
 
 				samples = extract_distinct_samples_torch(best_sample.T,single_spin=n)
 				results_b = build_nondominated_samples_torch(results_b, samples,[J0.float(),J1.float(),J2.float()],False) ####### most time cost
 				temp_time_b = time.time()
 				# print(temp_time_b-start_ete_b)
 			hv_b = get_hypervolume_torch(results_b, [J0.float(),J1.float(),J2.float()], reference_point)
-			# ndSol_num_b = results_b.shape[0]
+			print(results_b.shape)
 			end_ete_b=time.time()
 
 			start_ete_d = time.time()
@@ -167,7 +180,7 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 			weights_array = generate_simplex_lattice_weights(n_obj=num_objectives, H=H_param)
 			c_vectors = weights_array
 			# c_vectors = np.random.dirichlet(np.ones(num_objectives),size=100)
-			J = torch.zeros((n*c_vectors.shape[0],n*c_vectors.shape[0])).cuda()
+			J = torch.zeros((n*c_vectors.shape[0],n*c_vectors.shape[0])).to(device)
 			if num_objectives==2:
 				for j in range(c_vectors.shape[0]):
 					J[j*n:(1+j)*n,j*n:(1+j)*n]=c_vectors[j,0]*J0+c_vectors[j,1]*J1
@@ -176,7 +189,7 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 					J[j*n:(1+j)*n,j*n:(1+j)*n]=c_vectors[j,0]*J0+c_vectors[j,1]*J1+c_vectors[j,2]*J2
 			Ising_J = J
 			xi = 1 / torch.abs(Ising_J.sum(axis=1)).max()
-			Jm = Ising_J.cuda().float()
+			Jm = Ising_J.to(device).float()
 			Jm = Jm.to_sparse_csr()
 
 			results_d = None
@@ -185,12 +198,12 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 				batch_size = 3000
 				time_lim = 5
 			else:
-				n_iter = 1000
-				batch_size = 200
+				n_iter = 500
+				batch_size = 100
 				time_lim = 10
 			temp_time_d = time.time()
 			while temp_time_d-start_ete_d<time_lim:
-				s = tSB.SB(-Jm, n_iter=n_iter, xi=xi, dt=1, batch_size=batch_size,device='cuda')
+				s = tSB.SB(-Jm, n_iter=n_iter, xi=xi, dt=1, batch_size=batch_size,device=device)
 				start = time.time()
 				s.update_d(amp=0.1)
 				end=time.time()
@@ -198,23 +211,24 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 				rand_signs = 2.0 * torch.randint(0, 2, s.x.shape, device=s.x.device, dtype=s.x.dtype) - 1
 				best_sample = torch.where(s.x == 0, rand_signs, s.x)
 				best_sample = torch.sign(best_sample)
-				best_sample = best_sample[0]*best_sample
-	
+				# best_sample = best_sample[0]*best_sample
+				
 				samples = extract_distinct_samples_torch(best_sample.T,single_spin=n)
 				results_d = build_nondominated_samples_torch(results_d, samples,[J0.float(),J1.float(),J2.float()],False) ####### most time cost
 				temp_time_d = time.time()
 				# print(temp_time_d-start_ete_d)
 			hv_d = get_hypervolume_torch(results_d, [J0.float(),J1.float(),J2.float()], reference_point)
-			# ndSol_num_d = results_d.shape[0]
+			print(results_d.shape)
 			end_ete_d=time.time()
    
 			# bd_samples = torch.cat((results_b,results_d),dim=0)
 			output_b = (results_b/2+0.5).cpu().numpy().astype(bool)
+			output_b = np.logical_xor(output_b, output_b[:, [0]])
+			# output_b = np.unique(output_b, axis=0)
 			output_d = (results_d/2+0.5).cpu().numpy().astype(bool)
+			output_d = np.logical_xor(output_d, output_d[:, [0]])
 			front_ = np.vstack((output_b,output_d,sol))
-			# front_ = front_[(moocore.is_nondominated(front_, maximise=True, keep_weakly=False))]
-			# print(pareto_count(output_b,front_),front_.shape)
-			# moocore.hypervolume(-front_, ref=-np.array(_reference_point))
+			
 			print('heuristics begin')
 			n_vars = n  
 			matrices = [J0.float(), J1.float(), J2.float()]
@@ -233,7 +247,7 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 
 				def _evaluate(self, x, out, *args, **kwargs):
 
-					x = torch.from_numpy(x).cuda().float()
+					x = torch.from_numpy(x).to(device).float()
 					x_mapped = 2 * x - 1 # (N, D)
 					x_expanded = x_mapped.unsqueeze(1).unsqueeze(1) # (N, 1, 1, D)
 
@@ -276,11 +290,9 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 			output_rvea = res.X[(moocore.is_nondominated(output, maximise=True, keep_weakly=False))]
 			output_rvea = np.logical_xor(output_rvea, output_rvea[:, [0]])
 			front_ = np.vstack((front_, output_rvea))
-			ndSol_num_rvea = output_rvea.shape[0]
 			rvea_hv = moocore.hypervolume(-output, ref=-np.array(reference_point))
 			end_rvea = time.time()
 			print('RVEA done')
-   
    
 			problem = MyMatrixProblem(matrices)
 			output = None
@@ -313,10 +325,10 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 			output_moead = res.X[(moocore.is_nondominated(output, maximise=True, keep_weakly=False))]
 			output_moead = np.logical_xor(output_moead, output_moead[:, [0]])
 			front_ = np.vstack((front_, output_moead))
-			ndSol_num_moead = output_moead.shape[0]
 			moead_hv = moocore.hypervolume(-output, ref=-np.array(reference_point))
 			end_moead = time.time()
 			print('moead done')
+   
    
 			problem = MyMatrixProblem(matrices)
 			output = None
@@ -350,11 +362,9 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 			output_n2 = res.X[(moocore.is_nondominated(output, maximise=True, keep_weakly=False))]
 			output_n2 = np.logical_xor(output_n2, output_n2[:, [0]])
 			front_ = np.vstack((front_, output_n2))
-			ndSol_num_nsga2 = output_n2.shape[0]
 			nsga2_hv = moocore.hypervolume(-output, ref=-np.array(reference_point))
 			end_nsga2 = time.time()
 			print('nsga2 done')
-   
    
 			problem = MyMatrixProblem(matrices)
 			output = None
@@ -388,24 +398,29 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 			output_n3 = res.X[(moocore.is_nondominated(output, maximise=True, keep_weakly=False))]
 			output_n3 = np.logical_xor(output_n3, output_n3[:, [0]])
 			front_ = np.vstack((front_, output_n3))
-			# print(pareto_count(output_b.T,front_))
-			ndSol_num_nsga3 = output_n3.shape[0]
 			nsga3_hv = moocore.hypervolume(-output, ref=-np.array(reference_point))
 			end_nsga3 = time.time()
 			print('nsga3 done')
 
-   
-			random_sam = np.random.choice([True, False], size=(200, n))
+#### random
+			random_sam = np.random.randint(0, 2, size=(1000,n)).astype(bool)
 			random_sam = np.logical_xor(random_sam, random_sam[:, [0]])
-			random_hv = get_hypervolume_torch(torch.from_numpy(random_sam*2-1).cuda().float(), [J0.float(),J1.float(),J2.float()],reference_point)
+			# obj = [0.5*(Q.sum()-((torch.from_numpy(random_sam*2-1).to(device).float()@Q)*torch.from_numpy(random_sam*2-1).to(device).float()).sum(dim=1)).cpu().numpy() for Q in [J0.float(),J1.float(),J2.float()]]
+			# obj_fun = np.array(obj).T
+			# random_sam = random_sam[(moocore.is_nondominated(obj_fun, maximise=True, keep_weakly=False))]
+			# random_sam = np.logical_xor(random_sam, random_sam[:, [0]])
+			random_hv = get_hypervolume_torch(torch.from_numpy(random_sam*2-1).to(device).float(), [J0.float(),J1.float(),J2.float()],reference_point)
+####		
 			front_ = np.vstack((front_, random_sam))
-			cost = [0.5*(Q.sum()-((torch.from_numpy(front_*2-1).cuda().float()@Q)*torch.from_numpy(front_*2-1).cuda().float()).sum(dim=1)).cpu().numpy() for Q in [J0.float(),J1.float(),J2.float()]]
-			obj_fun = np.array(cost).T
+			obj = [0.5*(Q.sum()-((torch.from_numpy(front_*2-1).to(device).float()@Q)*torch.from_numpy(front_*2-1).to(device).float()).sum(dim=1)).cpu().numpy() for Q in [J0.float(),J1.float(),J2.float()]]
+			obj_fun = np.array(obj).T
+			print(front_.shape)
 			front_ = front_[(moocore.is_nondominated(obj_fun, maximise=True, keep_weakly=False))]
-			hv_max = max(get_hypervolume_torch(torch.from_numpy(front_*2-1).cuda().float(), [J0.float(),J1.float(),J2.float()], reference_point),hv_max)
+			# front_ = np.unique(front_, axis=0)
+			hv_max = max(get_hypervolume_torch(torch.from_numpy(front_*2-1).to(device).float(), [J0.float(),J1.float(),J2.float()], reference_point),hv_ref)
 
 			# print(output_b.shape,output_d.shape,front_.shape,pareto_count(output_b.T,front_)) ### shape (3,n)(3,m)(n+m,3)
-			print(hv_max,front_.shape[0])
+			print(hv_max,front_.shape)
 			print('random', random_hv/hv_max, pareto_count(random_sam,front_))
 			print(end_nsga2-start_nsga2 , nsga2_hv/hv_max, pareto_count(output_n2,front_))
 			print(end_nsga3-start_nsga3 , nsga3_hv/hv_max, pareto_count(output_n3,front_))
@@ -424,5 +439,5 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 			
 tot_data = np.array([n2_list,n3_list,md_list,rv_list,b_list,d_list])
 ref_pareto = np.array(ref_pareto)
-np.save('all_plot/raw_data/vsdata.npy',tot_data)
-np.save('all_plot/raw_data/refdata.npy',ref_pareto)
+# np.save('vsdata.npy',tot_data)
+# np.save('refdata.npy',ref_pareto)
