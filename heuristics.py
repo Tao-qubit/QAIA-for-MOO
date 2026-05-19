@@ -75,7 +75,7 @@ d_list=[]
 
 ref_pareto=[]
 
-for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(100,1),(200,0.5),(200,1)]:
+for (n_loop,d_loop) in [(25,0.5),(25,1),(42,'ibm'),(100,0.5),(100,1),(200,0.5),(200,1)]:
 # for (n_loop,d_loop) in [(200,1)]:
 		for rep_ in range(5):
 			if d_loop=='ibm':
@@ -100,23 +100,26 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 				np.random.seed(22233)
 				matrix0, matrix1, matrix2 = tri_problem(n,ds=ds)
 				np.random.seed(None)
-				if n<25:
-					spin_vectors = bf_samples(n)
+				
+				if n<30:
+					# spin_vectors = bf_samples(n)
+					spin_vectors = np.load(str(n)+'_'+str(ds)+'sol.npy')*2-1
 				else:
 					spin_vectors = np.random.randint(0, 2, size=(1000,n))*2-1
 
 				num_objectives = 3
 				J0, J1, J2 = torch.from_numpy(matrix0).to(device),  torch.from_numpy(matrix1).to(device), torch.from_numpy(matrix2).to(device)
-
 				obj0 = 0.5*(matrix0.sum() - (spin_vectors.dot(matrix0)*spin_vectors).sum(axis=1) )
 				obj1 = 0.5*(matrix1.sum() - (spin_vectors.dot(matrix1)*spin_vectors).sum(axis=1) )
 				obj2 = 0.5*(matrix2.sum() - (spin_vectors.dot(matrix2)*spin_vectors).sum(axis=1) )
 				cost = np.array([obj0,obj1,obj2]).T
-
 				answer = moocore.is_nondominated(cost, maximise=True, keep_weakly=False)
 				reference_point = cost.min(axis=0)
+				
 				hv_ref = moocore.hypervolume(-cost[answer], ref=-np.array(reference_point))
 				sol = (spin_vectors[answer]/2+0.5).astype(bool)
+				# if n <30:
+					# np.save(str(n)+'_'+str(ds)+'sol.npy',sol)
 				print('spin_non:', sol.shape)
 
 
@@ -156,7 +159,9 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 				batch_size = 100
 				time_lim = 10
 			temp_time_b = time.time()
+			lay=0
 			while temp_time_b-start_ete_b<time_lim:
+				lay+=1
 				s = tSB.SB(-Jm, n_iter=n_iter, xi=xi, dt=1, batch_size=batch_size,device=device)
 				start = time.time()
 				s.update_b(amp=0.1)
@@ -172,7 +177,7 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 				temp_time_b = time.time()
 				# print(temp_time_b-start_ete_b)
 			hv_b = get_hypervolume_torch(results_b, [J0.float(),J1.float(),J2.float()], reference_point)
-			print(results_b.shape)
+			print(results_b.shape,lay)
 			end_ete_b=time.time()
 
 			start_ete_d = time.time()
@@ -306,7 +311,7 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 				prob_neighbor_mating=0.9,
 				sampling=BinaryRandomSampling(),      
 				crossover=TwoPointCrossover(), 
-				mutation=BitflipMutation()
+				mutation=BitflipMutation(),
 			)
 			if n<50:
 				time_str = '00:00:05'
@@ -317,7 +322,6 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 						algorithm,
 						termination,
 						verbose=False)
-
 			if output is None:
 				output =-res.F
 			else:
@@ -403,15 +407,26 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 			print('nsga3 done')
 
 #### random
-			random_sam = np.random.randint(0, 2, size=(1000,n)).astype(bool)
-			random_sam = np.logical_xor(random_sam, random_sam[:, [0]])
-			# obj = [0.5*(Q.sum()-((torch.from_numpy(random_sam*2-1).to(device).float()@Q)*torch.from_numpy(random_sam*2-1).to(device).float()).sum(dim=1)).cpu().numpy() for Q in [J0.float(),J1.float(),J2.float()]]
-			# obj_fun = np.array(obj).T
-			# random_sam = random_sam[(moocore.is_nondominated(obj_fun, maximise=True, keep_weakly=False))]
-			# random_sam = np.logical_xor(random_sam, random_sam[:, [0]])
-			random_hv = get_hypervolume_torch(torch.from_numpy(random_sam*2-1).to(device).float(), [J0.float(),J1.float(),J2.float()],reference_point)
+			output_rand = None
+			rand_time_s = time.time()
+			rand_time_e = time.time()
+			lay = 0
+			while rand_time_e-rand_time_s<time_lim:
+				lay+=1
+				random_sam = np.random.randint(0, 2, size=(190,n)).astype(bool)
+				obj = [0.5*(Q.sum()-((torch.from_numpy(random_sam*2-1).to(device).float()@Q)*torch.from_numpy(random_sam*2-1).to(device).float()).sum(dim=1)).cpu().numpy() for Q in [J0.float(),J1.float(),J2.float()]]
+				obj_fun = np.array(obj).T
+				random_sam = random_sam[(moocore.is_nondominated(obj_fun, maximise=True, keep_weakly=False))]
+				random_sam = np.logical_xor(random_sam, random_sam[:, [0]])
+				if output_rand is None:
+					output_rand = random_sam
+				else:
+					output_rand = np.vstack((output_rand,random_sam))
+				rand_time_e = time.time()
+			print(lay)
+			random_hv = get_hypervolume_torch(torch.from_numpy(output_rand*2-1).to(device).float(), [J0.float(),J1.float(),J2.float()],reference_point)
 ####		
-			front_ = np.vstack((front_, random_sam))
+			front_ = np.vstack((front_, output_rand))
 			obj = [0.5*(Q.sum()-((torch.from_numpy(front_*2-1).to(device).float()@Q)*torch.from_numpy(front_*2-1).to(device).float()).sum(dim=1)).cpu().numpy() for Q in [J0.float(),J1.float(),J2.float()]]
 			obj_fun = np.array(obj).T
 			print(front_.shape)
@@ -421,7 +436,7 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 
 			# print(output_b.shape,output_d.shape,front_.shape,pareto_count(output_b.T,front_)) ### shape (3,n)(3,m)(n+m,3)
 			print(hv_max,front_.shape)
-			print('random', random_hv/hv_max, pareto_count(random_sam,front_))
+			print('random', random_hv/hv_max, pareto_count(output_rand,front_))
 			print(end_nsga2-start_nsga2 , nsga2_hv/hv_max, pareto_count(output_n2,front_))
 			print(end_nsga3-start_nsga3 , nsga3_hv/hv_max, pareto_count(output_n3,front_))
 			print(end_moead-start_moead , moead_hv/hv_max, pareto_count(output_moead,front_))
@@ -434,10 +449,10 @@ for (n_loop,d_loop) in [(15,0.5),(15,1),(20,0.5),(20,1),(42,'ibm'),(100,0.5),(10
 			rv_list.append([end_rvea-start_rvea , rvea_hv/hv_max, pareto_count(output_rvea,front_)])
 			b_list.append([end_ete_b-start_ete_b , hv_b/hv_max, pareto_count(output_b,front_)])
 			d_list.append([end_ete_d-start_ete_d , hv_d/hv_max, pareto_count(output_d,front_)])
-			ref_pareto.append([hv_max,front_.shape[0],random_hv/hv_max, pareto_count(random_sam,front_)])
+			ref_pareto.append([hv_max,front_.shape[0],random_hv/hv_max, pareto_count(output_rand,front_)])
 
 			
 tot_data = np.array([n2_list,n3_list,md_list,rv_list,b_list,d_list])
 ref_pareto = np.array(ref_pareto)
-# np.save('vsdata.npy',tot_data)
-# np.save('refdata.npy',ref_pareto)
+np.save('vsdata.npy',tot_data)
+np.save('refdata.npy',ref_pareto)
