@@ -159,9 +159,7 @@ for (n_loop,d_loop) in [(25,0.5),(25,1),(42,'ibm'),(100,0.5),(100,1),(200,0.5),(
 				batch_size = 100
 				time_lim = 10
 			temp_time_b = time.time()
-			lay=0
 			while temp_time_b-start_ete_b<time_lim:
-				lay+=1
 				s = tSB.SB(-Jm, n_iter=n_iter, xi=xi, dt=1, batch_size=batch_size,device=device)
 				start = time.time()
 				s.update_b(amp=0.1)
@@ -176,8 +174,9 @@ for (n_loop,d_loop) in [(25,0.5),(25,1),(42,'ibm'),(100,0.5),(100,1),(200,0.5),(
 				results_b = build_nondominated_samples_torch(results_b, samples,[J0.float(),J1.float(),J2.float()],False) ####### most time cost
 				temp_time_b = time.time()
 				# print(temp_time_b-start_ete_b)
+
 			hv_b = get_hypervolume_torch(results_b, [J0.float(),J1.float(),J2.float()], reference_point)
-			print(results_b.shape,lay)
+			print(results_b.shape)
 			end_ete_b=time.time()
 
 			start_ete_d = time.time()
@@ -410,9 +409,7 @@ for (n_loop,d_loop) in [(25,0.5),(25,1),(42,'ibm'),(100,0.5),(100,1),(200,0.5),(
 			output_rand = None
 			rand_time_s = time.time()
 			rand_time_e = time.time()
-			lay = 0
 			while rand_time_e-rand_time_s<time_lim:
-				lay+=1
 				random_sam = np.random.randint(0, 2, size=(190,n)).astype(bool)
 				obj = [0.5*(Q.sum()-((torch.from_numpy(random_sam*2-1).to(device).float()@Q)*torch.from_numpy(random_sam*2-1).to(device).float()).sum(dim=1)).cpu().numpy() for Q in [J0.float(),J1.float(),J2.float()]]
 				obj_fun = np.array(obj).T
@@ -423,7 +420,6 @@ for (n_loop,d_loop) in [(25,0.5),(25,1),(42,'ibm'),(100,0.5),(100,1),(200,0.5),(
 				else:
 					output_rand = np.vstack((output_rand,random_sam))
 				rand_time_e = time.time()
-			print(lay)
 			random_hv = get_hypervolume_torch(torch.from_numpy(output_rand*2-1).to(device).float(), [J0.float(),J1.float(),J2.float()],reference_point)
 ####		
 			front_ = np.vstack((front_, output_rand))
