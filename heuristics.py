@@ -102,8 +102,8 @@ for (n_loop,d_loop) in [(25,0.5),(25,1),(42,'ibm'),(100,0.5),(100,1),(200,0.5),(
 				np.random.seed(None)
 				
 				if n<30:
-					# spin_vectors = bf_samples(n)
-					spin_vectors = np.load(str(n)+'_'+str(ds)+'sol.npy')*2-1
+					spin_vectors = bf_samples(n)
+					# spin_vectors = np.load(str(n)+'_'+str(ds)+'sol.npy')*2-1
 				else:
 					spin_vectors = np.random.randint(0, 2, size=(1000,n))*2-1
 
